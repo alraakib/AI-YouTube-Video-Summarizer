@@ -1,8 +1,6 @@
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
-from pytube import YouTube
 import openai
+import yt_dlp
 import os
 from pathlib import Path
 import tiktoken
@@ -10,28 +8,23 @@ import tiktoken
 # Set up OpenAI API
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-def get_youtube_transcript(url):
-    """Extract English transcript from YouTube video"""
-    try:
-        video_id = YouTube(url).video_id
-        transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-        return ' '.join([t['text'] for t in transcript])
-    except (TranscriptsDisabled, NoTranscriptFound):
-        return None
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return None
-
 def download_audio(url):
-    """Download audio stream from YouTube video"""
+    """Download audio from YouTube using yt-dlp"""
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': 'temp_audio/%(title)s.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }],
+        'quiet': True
+    }
+
     try:
-        yt = YouTube(url)
-        audio_stream = yt.streams.filter(only_audio=True, file_extension='mp4').first()
-        if audio_stream:
-            output_path = Path("temp_audio")
-            output_path.mkdir(exist_ok=True)
-            return audio_stream.download(output_path=output_path)
-        return None
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return Path(ydl.prepare_filename(info)).with_suffix('.mp3')
     except Exception as e:
         st.error(f"Download error: {e}")
         return None
@@ -40,8 +33,12 @@ def transcribe_audio(file_path):
     """Transcribe audio using OpenAI Whisper"""
     try:
         with open(file_path, "rb") as audio_file:
-            transcript = openai.Audio.transcribe("whisper-1", audio_file)
-        return transcript['text']
+            transcript = openai.Audio.transcribe(
+                "whisper-1",
+                audio_file,
+                response_format="text"
+            )
+        return transcript
     except Exception as e:
         st.error(f"Transcription error: {e}")
         return None
@@ -79,38 +76,38 @@ url = st.text_input("Enter YouTube Video URL:", placeholder="https://youtube.com
 
 if st.button("Generate Summary"):
     if url:
-        with st.spinner("Analyzing video..."):
-            # Try to get transcript
-            transcript = get_youtube_transcript(url)
+        with st.spinner("Processing video..."):
+            # Download audio
+            audio_path = download_audio(url)
             
-            # If no transcript, try audio transcription
-            if not transcript:
-                audio_path = download_audio(url)
-                if audio_path:
-                    transcript = transcribe_audio(audio_path)
-                    os.remove(audio_path)  # Cleanup audio file
-            
-            if transcript:
-                # Display transcript
-                st.subheader("📝 Full Transcript")
-                st.expander("View Transcript").write(transcript)
+            if audio_path and audio_path.exists():
+                # Transcribe audio
+                transcript = transcribe_audio(audio_path)
+                os.remove(audio_path)  # Cleanup audio file
                 
-                # Generate and display summary
-                st.subheader("📌 AI-Generated Summary")
-                summary = generate_summary(transcript)
-                if summary:
-                    st.write(summary)
+                if transcript:
+                    # Display transcript
+                    st.subheader("📝 Full Transcript")
+                    st.expander("View Transcript").write(transcript)
                     
-                    # Download buttons
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.download_button("Download Summary", summary, file_name="summary.txt")
-                    with col2:
-                        st.download_button("Download Transcript", transcript, file_name="transcript.txt")
+                    # Generate and display summary
+                    st.subheader("📌 AI-Generated Summary")
+                    summary = generate_summary(transcript)
+                    if summary:
+                        st.write(summary)
+                        
+                        # Download buttons
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.download_button("Download Summary", summary, file_name="summary.txt")
+                        with col2:
+                            st.download_button("Download Transcript", transcript, file_name="transcript.txt")
+                    else:
+                        st.error("Failed to generate summary")
                 else:
-                    st.error("Failed to generate summary")
+                    st.error("Transcription failed. Please try another video.")
             else:
-                st.error("Could not process video. Please check URL or try another video.")
+                st.error("Could not download video. Please check URL or try another video.")
     else:
         st.warning("Please enter a valid YouTube URL")
 
