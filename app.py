@@ -10,7 +10,14 @@ import ffmpeg
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 def download_audio(url):
-    """Download audio from YouTube using yt-dlp with FFmpeg path specification"""
+    """Download audio from YouTube using yt-dlp with FFmpeg and FFprobe path specification"""
+    ffmpeg_path = '/usr/bin/ffmpeg'  # Update this if your ffmpeg binary is located elsewhere
+    ffprobe_path = '/usr/bin/ffprobe'  # Explicitly specify ffprobe too
+
+    if not Path(ffmpeg_path).exists() or not Path(ffprobe_path).exists():
+        st.error("FFmpeg or FFprobe not found at the specified path. Please ensure they are installed.")
+        return None
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': 'temp_audio/%(title)s.%(ext)s',
@@ -19,7 +26,8 @@ def download_audio(url):
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }],
-        'ffmpeg_location': '/usr/bin/ffmpeg',  # Explicit path for cloud deployment
+        'ffmpeg_location': ffmpeg_path,
+        'ffprobe_location': ffprobe_path,  # Add this line
         'quiet': True
     }
 
